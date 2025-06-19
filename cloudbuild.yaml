@@ -1,0 +1,8 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '${_IMAGE_NAME}', '-f', 'Dockerfile.prod', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_IMAGE_NAME}']
+
+substitutions:
+  _IMAGE_NAME: 'us-east1-docker.pkg.dev/hidden-solstice-460821-g4/hydro-alert-app/hydro-extractor:latest'
