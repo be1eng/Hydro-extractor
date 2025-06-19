@@ -1,0 +1,26 @@
+FROM python:3.10-slim
+
+# Establece el directorio de trabajo dentro del contenedor
+WORKDIR /code
+
+# Copia el archivo requirements.txt e instala dependencias
+COPY requirements.txt /code/
+
+# Instala las dependencias del sistema necesarias para selenium y psycopg2
+RUN apt-get update && apt-get install -y \
+    curl unzip gnupg libpq-dev gcc \
+    chromium-driver \
+    && pip install --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copia el resto del código
+COPY . /code/
+ENV PYTHONPATH=/code
+# Establece variables de entorno para selenium
+ENV PATH="/usr/lib/chromium:/usr/local/bin:$PATH"
+ENV CHROME_BIN="/usr/bin/chromium"
+
+# Comando por defecto para ejecutar tu script
+CMD ["python", "main.py"]

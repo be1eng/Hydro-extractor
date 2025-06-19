@@ -18,6 +18,10 @@ RUN apt-get update && \
     | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
     apt-get update && \
     apt-get install -y docker-ce-cli
+# Install Chromium and Chromedriver
+RUN apt-get update && \
+    apt-get install -y chromium chromium-driver && \
+    rm -rf /var/lib/apt/lists/*
 
 # Check if the 'docker' group exists, and create it if not
 RUN if ! getent group docker; then groupadd docker; fi

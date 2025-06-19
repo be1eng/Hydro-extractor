@@ -1,0 +1,11 @@
+pandas
+selenium
+beautifulsoup4
+PyYAML
+loguru
+numpy
+matplotlib
+requests
+psycopg2-binary
+SQLAlchemy
+dotenv
