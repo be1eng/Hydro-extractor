@@ -82,31 +82,66 @@ def load_page_with_timeout(browser, url, timeout=20):
     return browser
 
 
-def obtener_data(browser, id_cuerpo_agua, estacion):
-    fecha_hora = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    url = generar_url(id_cuerpo_agua, fecha_hora)
+def obtener_data(browser, id_cuerpo_agua, estacion, max_retries=3, retry_delay=5):
+    """
+    Obtiene los datos de una estación, con reintentos en caso de fallo.
 
-    try:
-        browser = load_page_with_timeout(browser, url)
-        page_source = browser.page_source
-        soup = BeautifulSoup(page_source, 'html.parser')
-        script_content = soup.select_one('body script:nth-child(4)').string
-        data_match = re.search(r'dataCSV = \[.*?\]', script_content, re.DOTALL)
-        if data_match:
-            data_content = data_match.group(0)
-            data_string = data_content[10:]
-            data_list = json.loads(data_string)
-            df = pd.DataFrame(data_list)
-            df['estacion'] = estacion
-            return df
+    Args:
+        browser: Instancia del navegador Selenium.
+        id_cuerpo_agua: ID del cuerpo de agua.
+        estacion: Nombre de la estación.
+        max_retries: Número máximo de intentos de reintento.
+        retry_delay: Tiempo en segundos entre reintentos.
+
+    Returns:
+        DataFrame con los datos si se obtienen con éxito, de lo contrario None.
+    """
+    for attempt in range(max_retries):
+        fecha_hora = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        url = generar_url(id_cuerpo_agua, fecha_hora)
+
+        print(f"[{estacion}] Intento {attempt + 1}/{max_retries} para obtener datos de: {url}")
+
+        try:
+            # Load the page and check if it was successful
+            if not load_page_with_timeout(browser, url):
+                if attempt < max_retries - 1:
+                    print(f"[{estacion}] La página no se cargó correctamente. Reintentando en {retry_delay} segundos...")
+                    time.sleep(retry_delay)
+                continue # Go to the next attempt
+
+            page_source = browser.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
+            script_tag = soup.select_one('body script:nth-child(4)')
+
+            if script_tag and script_tag.string:
+                script_content = script_tag.string
+                data_match = re.search(r'dataCSV = \[.*?\]', script_content, re.DOTALL)
+
+                if data_match:
+                    data_content = data_match.group(0)
+                    data_string = data_content[10:]
+                    data_list = json.loads(data_string)
+                    df = pd.DataFrame(data_list)
+                    df['estacion'] = estacion
+                    return df  # Successfully obtained data, exit the loop
+                else:
+                    print(f"[{estacion}] No se encontró la variable 'dataCSV' en el script.")
+            else:
+                print(f"[{estacion}] No se encontró el tag script o su contenido.")
+
+        except Exception as e:
+            print(f"[{estacion}] Error procesando datos en el intento {attempt + 1}: {e}")
+
+        # If data not found or error, and it's not the last attempt, wait and retry
+        if attempt < max_retries - 1:
+            print(f"[{estacion}] Reintentando en {retry_delay} segundos...")
+            time.sleep(retry_delay)
         else:
-            print(f"[{estacion}] No se encontró la variable 'data'")
-            return None
-    except Exception as e:
-        print(f"[{estacion}] Error procesando datos: {e}")
-        return None
-    finally:
-        browser.quit()
+            print(f"[{estacion}] Fallaron todos los intentos. No se pudieron obtener datos después de {max_retries} intentos.")
+
+    return None  # Return None if all attempts fail
+
 
 # ---------------------------- Obtener estaciones ----------------------------
 def fetch_estaciones():
