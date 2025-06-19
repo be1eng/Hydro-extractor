@@ -226,9 +226,32 @@ def insertar_datos_nuevos(data_to_insert_df, estacion_id):
         conn.close()
 
 
+# def obtener_data_actual_db(estacion_id):
+#     try:
+#         engine = get_engine()
+#         query = """
+#             SELECT Fecha, Hora, Valor AS Dato, Estado
+#             FROM DatosSensor
+#             WHERE EstacionID = %s
+#             ORDER BY Fecha DESC, Hora DESC
+#             LIMIT 10;
+#         """
+#         df = pd.read_sql(query, engine, params=(estacion_id,))
+#         if df.empty or not {'Fecha', 'Hora', 'Dato', 'Estado'}.issubset(df.columns):
+#             print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
+#             return pd.DataFrame()
+#         return df
+#     except Exception as e:
+#         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
+#         return pd.DataFrame()
+
 def obtener_data_actual_db(estacion_id):
     try:
-        engine = get_engine()
+        conn = get_connection()
+        if conn is None:
+            print("No se pudo conectar a la base de datos.")
+            return pd.DataFrame()
+
         query = """
             SELECT Fecha, Hora, Valor AS Dato, Estado
             FROM DatosSensor
@@ -236,15 +259,26 @@ def obtener_data_actual_db(estacion_id):
             ORDER BY Fecha DESC, Hora DESC
             LIMIT 10;
         """
-        df = pd.read_sql(query, engine, params=(estacion_id,))
+
+        with conn.cursor() as cur:
+            cur.execute(query, (estacion_id,))
+            rows = cur.fetchall()
+            colnames = [desc[0] for desc in cur.description]
+            df = pd.DataFrame(rows, columns=colnames)
+
         if df.empty or not {'Fecha', 'Hora', 'Dato', 'Estado'}.issubset(df.columns):
             print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
             return pd.DataFrame()
+
         return df
+
     except Exception as e:
         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
         return pd.DataFrame()
 
+    finally:
+        if conn:
+            conn.close()
 
 
 
