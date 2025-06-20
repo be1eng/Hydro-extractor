@@ -235,7 +235,7 @@ def obtener_data_actual_db(estacion_id):
                     return pd.DataFrame()
 
         query = """
-            SELECT Fecha, Hora, Dato, Estado
+            SELECT Fecha, Hora, Valor, Estado
             FROM DatosSensor
             WHERE EstacionID = %s
             ORDER BY Fecha DESC, Hora DESC;
