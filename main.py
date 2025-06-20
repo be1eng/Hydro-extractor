@@ -253,11 +253,11 @@ def obtener_ultima_data(estacion_id):
             return pd.DataFrame()
 
         query = """
-            SELECT TOP 1 * 
+            SELECT * 
             FROM DatosSensor
             WHERE EstacionID = %s
             ORDER BY Fecha DESC, Hora DESC
-            LIMIT 10;
+            LIMIT 1;
         """
 
         with conn.cursor() as cur:
