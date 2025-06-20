@@ -270,10 +270,10 @@ def obtener_data_actual_db(estacion_id):
         query = """
             SELECT *
             FROM DatosSensor
-            WHERE EstacionID = %s
+            WHERE EstacionID = :estacion_id
             ORDER BY Fecha DESC, Hora DESC;
         """
-        df = pd.read_sql(query, engine, params=(estacion_id,))
+        df = pd.read_sql(query, engine, params={"estacion_id": estacion_id})
         if df.empty or not {'Fecha', 'Hora', 'Valor', 'Estado'}.issubset(df.columns):
             print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
             return pd.DataFrame()
