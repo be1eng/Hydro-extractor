@@ -229,14 +229,17 @@ def insertar_datos_nuevos(data_to_insert_df, estacion_id):
 
 def obtener_data_actual_db(estacion_id):
     try:
-        engine = get_engine()
+        conn = get_connection()
+        if conn is None:
+            print("No se pudo conectar a la base de datos.")
+            return pd.DataFrame()
         query = """
             SELECT Fecha, Hora, Valor AS Dato, Estado
             FROM DatosSensor
             WHERE EstacionID = %s
             ORDER BY Fecha DESC, Hora DESC;
         """
-        df = pd.read_sql(query, engine, params=(estacion_id,))
+        df = pd.read_sql(query, conn, params=(estacion_id,))
         if df.empty or not {'Fecha', 'Hora', 'Dato', 'Estado'}.issubset(df.columns):
             print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
             return pd.DataFrame()
@@ -287,7 +290,7 @@ def main():
         return
 
     formatted_results = []
-
+ 
     with ThreadPoolExecutor(max_workers=5) as executor:
         # Lanza las tareas paralelamente, pasando ID y nombre de la estación
         futures = {
