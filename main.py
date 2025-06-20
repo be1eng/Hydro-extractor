@@ -57,6 +57,7 @@ variable_opcion = "C"
 
 # ------------------------------------------Configuración de Chrome------------------------------------------
 chrome_options = Options()
+chrome_options.add_argument("--headless=new")  # Usa el nuevo modo headless (desde Chrome 109+)
 chrome_options.add_argument("--headless=new")  # Desde Chrome 109+
 chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--no-sandbox")
@@ -175,7 +176,7 @@ def formatear_data(df, estacion, umbral_neutro=0):
     df['Hora'] = df['fechaHora'].dt.time
     df['Dato'] = df['dato']
     df['Mes'] = df['fechaHora'].dt.strftime('%B')
-    
+
     # Umbral neutro constante
     df['Umbral'] = umbral_neutro
     df['Estado'] = 'Sin definir'
@@ -226,136 +227,57 @@ def insertar_datos_nuevos(data_to_insert_df, estacion_id):
         conn.close()
 
 
-# def obtener_data_actual_db(estacion_id):
-#     try:
-#         engine = get_engine()
-#         query = """
-#             SELECT Fecha, Hora, Valor AS Dato, Estado
-#             FROM DatosSensor
-#             WHERE EstacionID = %s
-#             ORDER BY Fecha DESC, Hora DESC
-#             LIMIT 10;
-#         """
-#         df = pd.read_sql(query, engine, params=(estacion_id,))
-#         if df.empty or not {'Fecha', 'Hora', 'Dato', 'Estado'}.issubset(df.columns):
-#             print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
-#             return pd.DataFrame()
-#         return df
-#     except Exception as e:
-#         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
-#         return pd.DataFrame()
-
-def obtener_ultima_data(estacion_id):
+def obtener_data_actual_db(estacion_id):
     try:
-        conn = get_connection()
-        if conn is None:
-            print("No se pudo conectar a la base de datos.")
-            return pd.DataFrame()
-
+        engine = get_engine()
         query = """
-            SELECT Fecha, Hora, Valor AS Dato, Estado 
+            SELECT Fecha, Hora, Valor AS Dato, Estado
             FROM DatosSensor
             WHERE EstacionID = %s
             ORDER BY Fecha DESC, Hora DESC
-            LIMIT 1;
+            LIMIT 10;
         """
-
-        with conn.cursor() as cur:
-            cur.execute(query, (estacion_id,))
-            result = cur.fetchone()
-            if result:
-                columns = [column[0] for column in cur.description]
-                row = dict(zip(columns, result))
-                print("Last data of table:", row)
-                return row
-            else:
-                print("Error: No results of table")
-                return None
-
+        df = pd.read_sql(query, engine, params=(estacion_id,))
+        if df.empty or not {'Fecha', 'Hora', 'Dato', 'Estado'}.issubset(df.columns):
+            print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
+            return pd.DataFrame()
+        return df
     except Exception as e:
         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
         return pd.DataFrame()
 
-    finally:
-        if conn:
-            conn.close()
 
-
-
-# def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
-#     df_actual = obtener_data_actual_db(estacion_id)
-#     if df_actual.empty:
-#         print(f"[{estacion_nombre}] No hay datos actuales, insertando todos los nuevos.")
-#         insertar_datos_nuevos(df_nuevo, estacion_id)
-#         return
-
-#     last_db_date = df_actual.iloc[0]['Fecha']
-#     last_db_time = df_actual.iloc[0]['Hora']
-#     last_db_dt = datetime.combine(last_db_date, last_db_time)
-
-#     last_new_date = df_nuevo.iloc[-1]['Fecha']
-#     last_new_time = df_nuevo.iloc[-1]['Hora']
-#     last_new_dt = datetime.combine(last_new_date, last_new_time)
-
-#     if last_new_dt > last_db_dt:
-#         print(f"[{estacion_nombre}] Se detectaron nuevos datos.")
-#         # Filtrar datos más recientes
-#         nuevos_datos = df_nuevo[
-#             (df_nuevo['Fecha'] > last_db_date) |
-#             ((df_nuevo['Fecha'] == last_db_date) & (df_nuevo['Hora'] > last_db_time))
-#         ]
-#         if not nuevos_datos.empty:
-#             insertar_datos_nuevos(nuevos_datos, estacion_id)
-#         else:
-#             print(f"[{estacion_nombre}] Ningún dato nuevo pasó el filtro.")
-#     else:
-#         print(f"[{estacion_nombre}] No hay datos nuevos.")
 
 
 def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
-    last_dataframe=df_nuevo.iloc[-1]
-    last_dataframe_datetime = f"{last_dataframe['fecha']} {last_dataframe['hora']}"
-    last_dataframe_datetime = datetime.strptime(last_dataframe_datetime, '%Y-%m-%d %H:%M:%S')
-
-    last_data_db = obtener_ultima_data(estacion_id)
-    last_data_db_datetime = f"{last_data_db['fecha']} {last_data_db['hora']}"
-    last_data_db_datetime = datetime.strptime(last_data_db_datetime, '%Y-%m-%d %H:%M:%S')
-
-    if last_data_db_datetime < last_dataframe_datetime:
-        print("Data detectada ha insertar")
-        data_to_insert_df = comparar_data_db(df_nuevo, estacion_id)
-        insertar_datos_nuevos(data_to_insert_df, estacion_id)
-        print(f"[{estacion_nombre}] Insertando todos los nuevos.")
+    df_actual = obtener_data_actual_db(estacion_id)
+    if df_actual.empty:
+        print(f"[{estacion_nombre}] No hay datos actuales, insertando todos los nuevos.")
+        insertar_datos_nuevos(df_nuevo, estacion_id)
         return
-    else:
-        print(f"[{estacion_nombre}] No hay datos nuevos para insertar.")
 
-def comparar_data_db(new_data, estacion_id):
-    last_data = obtener_ultima_data(estacion_id)
-    if not last_data:
-            return "No hay data en la base de datos."
-    last_five_data = new_data.iloc[-5:]
-    data_to_insert = []
+    last_db_date = df_actual.iloc[0]['Fecha']
+    last_db_time = df_actual.iloc[0]['Hora']
+    last_db_dt = datetime.combine(last_db_date, last_db_time)
 
-    for index in range(len(last_five_data) - 1, -1, -1):
-        current_data = last_five_data.iloc[index]
-        current_date = current_data['fecha']
-        current_time = current_data['hora']
-        
-        # Comparar con el último dato registrado en la BD
-        if (current_date != last_data['fecha'] or current_time != last_data['hora']):
-            print("New data found:", current_data)
-            data_to_insert.append(current_data)
+    last_new_date = df_nuevo.iloc[-1]['Fecha']
+    last_new_time = df_nuevo.iloc[-1]['Hora']
+    last_new_dt = datetime.combine(last_new_date, last_new_time)
+
+    if last_new_dt > last_db_dt:
+        print(f"[{estacion_nombre}] Se detectaron nuevos datos.")
+        # Filtrar datos más recientes
+        nuevos_datos = df_nuevo[
+            (df_nuevo['Fecha'] > last_db_date) |
+            ((df_nuevo['Fecha'] == last_db_date) & (df_nuevo['Hora'] > last_db_time))
+        ]
+        if not nuevos_datos.empty:
+            insertar_datos_nuevos(nuevos_datos, estacion_id)
         else:
-            print("Data already exists in the database:", current_data)
-            break 
-
-    if data_to_insert:
-        data_to_insert_df = pd.DataFrame(data_to_insert)
-        return data_to_insert_df
+            print(f"[{estacion_nombre}] Ningún dato nuevo pasó el filtro.")
     else:
-        print("No new data to insert.")
-        return pd.DataFrame(), pd.DataFrame()  
+        print(f"[{estacion_nombre}] No hay datos nuevos.")
+
 
 # ---------------------------- Main con ThreadPoolExecutor ----------------------------
 
