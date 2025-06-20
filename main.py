@@ -245,7 +245,7 @@ def insertar_datos_nuevos(data_to_insert_df, estacion_id):
 #         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
 #         return pd.DataFrame()
 
-def obtener_data_actual_db(estacion_id):
+def obtener_ultima_data(estacion_id):
     try:
         conn = get_connection()
         if conn is None:
@@ -253,7 +253,7 @@ def obtener_data_actual_db(estacion_id):
             return pd.DataFrame()
 
         query = """
-            SELECT Fecha, Hora, Valor AS Dato, Estado
+            SELECT TOP 1 * 
             FROM DatosSensor
             WHERE EstacionID = %s
             ORDER BY Fecha DESC, Hora DESC
@@ -262,15 +262,15 @@ def obtener_data_actual_db(estacion_id):
 
         with conn.cursor() as cur:
             cur.execute(query, (estacion_id,))
-            rows = cur.fetchall()
-            colnames = [desc[0] for desc in cur.description]
-            df = pd.DataFrame(rows, columns=colnames)
-
-        if df.empty or not {'Fecha', 'Hora', 'Dato', 'Estado'}.issubset(df.columns):
-            print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
-            return pd.DataFrame()
-
-        return df
+            result = cur.fetchone()
+            if result:
+                columns = [column[0] for column in cur.description]
+                row = dict(zip(columns, result))
+                print("Last data of table:", row)
+                return row
+            else:
+                print("Error: No results of table")
+                return None
 
     except Exception as e:
         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
@@ -313,39 +313,49 @@ def obtener_data_actual_db(estacion_id):
 
 
 def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
-    df_actual = obtener_data_actual_db(estacion_id)
+    last_dataframe=df_nuevo.iloc[-1]
+    last_dataframe_datetime = f"{last_dataframe['Fecha']} {last_dataframe['Hora']}"
+    last_dataframe_datetime = datetime.strptime(last_dataframe_datetime, '%Y-%m-%d %H:%M:%S')
 
-    if df_actual.empty:
-        print(f"[{estacion_nombre}] No hay datos actuales, insertando todos los nuevos.")
-        insertar_datos_nuevos(df_nuevo, estacion_id)
+    last_data_db = obtener_ultima_data(estacion_id)
+    last_data_db_datetime = f"{last_data_db['Fecha']} {last_data_db['Hora']}"
+    last_data_db_datetime = datetime.strptime(last_data_db_datetime, '%Y-%m-%d %H:%M:%S')
+
+    if last_data_db_datetime < last_dataframe_datetime:
+        print("Data detectada ha insertar")
+        data_to_insert_df = comparar_data_db(df_nuevo, estacion_id)
+        insertar_datos_nuevos(data_to_insert_df, estacion_id)
+        print(f"[{estacion_nombre}] Insertando todos los nuevos.")
         return
-
-    # Último dato registrado en BD
-    last_db_date = df_actual.iloc[0]['Fecha']
-    last_db_time = df_actual.iloc[0]['Hora']
-    last_db_dt = datetime.combine(last_db_date, last_db_time)
-
-    # Datos nuevos candidatos (últimos 5 por si hay retrasos en la carga)
-    last_five_new = df_nuevo.iloc[-5:]
-    data_to_insert = []
-
-    for index in range(len(last_five_new) - 1, -1, -1):
-        current_row = last_five_new.iloc[index]
-        current_dt = datetime.combine(current_row['Fecha'], current_row['Hora'])
-
-        if current_dt > last_db_dt:
-            data_to_insert.insert(0, current_row)  # Agregar en orden ascendente
-        else:
-            print(f"[{estacion_nombre}] Dato ya existente o anterior: {current_row['Fecha']} {current_row['Hora']}")
-            break  # Lo siguiente ya es más antiguo
-
-    if data_to_insert:
-        df_insert = pd.DataFrame(data_to_insert)
-        print(f"[{estacion_nombre}] Insertando {len(df_insert)} nuevos datos.")
-        insertar_datos_nuevos(df_insert, estacion_id)
     else:
         print(f"[{estacion_nombre}] No hay datos nuevos para insertar.")
+
+def comparar_data_db(new_data, estacion_id):
+    last_data = obtener_ultima_data(estacion_id)
+    if not last_data:
+            return "No hay data en la base de datos."
+    last_five_data = new_data.iloc[-5:]
+    data_to_insert = []
+
+    for index in range(len(last_five_data) - 1, -1, -1):
+        current_data = last_five_data.iloc[index]
+        current_date = current_data['Fecha']
+        current_time = current_data['Hora']
         
+        # Comparar con el último dato registrado en la BD
+        if (current_date != last_data['Fecha'] or current_time != last_data['Hora']):
+            print("New data found:", current_data)
+            data_to_insert.append(current_data)
+        else:
+            print("Data already exists in the database:", current_data)
+            break 
+
+    if data_to_insert:
+        data_to_insert_df = pd.DataFrame(data_to_insert)
+        return data_to_insert_df
+    else:
+        print("No new data to insert.")
+        return pd.DataFrame(), pd.DataFrame()  
 
 # ---------------------------- Main con ThreadPoolExecutor ----------------------------
 
