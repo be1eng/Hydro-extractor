@@ -211,7 +211,8 @@ def insertar_datos_nuevos(data_to_insert_df, estacion_id):
             for _, row in data_to_insert_df.iterrows():
                 cur.execute("""
                     INSERT INTO DatosSensor (EstacionID, Fecha, Hora, Valor, Estado, UmbralID, UmbralUsuarioID)
-                    VALUES (%s, %s, %s, %s, %s, NULL, NULL);
+                    VALUES (%s, %s, %s, %s, %s, NULL, NULL)
+                    ON CONFLICT (EstacionID, Fecha, Hora, Valor, Estado) DO NOTHING;
                 """, (
                     estacion_id,
                     row['Fecha'],
