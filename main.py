@@ -253,7 +253,7 @@ def obtener_ultima_data(estacion_id):
             return pd.DataFrame()
 
         query = """
-            SELECT * 
+            SELECT Fecha, Hora, Valor AS Dato, Estado 
             FROM DatosSensor
             WHERE EstacionID = %s
             ORDER BY Fecha DESC, Hora DESC
@@ -314,11 +314,11 @@ def obtener_ultima_data(estacion_id):
 
 def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
     last_dataframe=df_nuevo.iloc[-1]
-    last_dataframe_datetime = f"{last_dataframe['Fecha']} {last_dataframe['Hora']}"
+    last_dataframe_datetime = f"{last_dataframe['fecha']} {last_dataframe['hora']}"
     last_dataframe_datetime = datetime.strptime(last_dataframe_datetime, '%Y-%m-%d %H:%M:%S')
 
     last_data_db = obtener_ultima_data(estacion_id)
-    last_data_db_datetime = f"{last_data_db['Fecha']} {last_data_db['Hora']}"
+    last_data_db_datetime = f"{last_data_db['fecha']} {last_data_db['hora']}"
     last_data_db_datetime = datetime.strptime(last_data_db_datetime, '%Y-%m-%d %H:%M:%S')
 
     if last_data_db_datetime < last_dataframe_datetime:
@@ -339,11 +339,11 @@ def comparar_data_db(new_data, estacion_id):
 
     for index in range(len(last_five_data) - 1, -1, -1):
         current_data = last_five_data.iloc[index]
-        current_date = current_data['Fecha']
-        current_time = current_data['Hora']
+        current_date = current_data['fecha']
+        current_time = current_data['hora']
         
         # Comparar con el último dato registrado en la BD
-        if (current_date != last_data['Fecha'] or current_time != last_data['Hora']):
+        if (current_date != last_data['fecha'] or current_time != last_data['hora']):
             print("New data found:", current_data)
             data_to_insert.append(current_data)
         else:
