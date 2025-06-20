@@ -211,8 +211,7 @@ def insertar_datos_nuevos(data_to_insert_df, estacion_id):
             for _, row in data_to_insert_df.iterrows():
                 cur.execute("""
                     INSERT INTO DatosSensor (EstacionID, Fecha, Hora, Valor, Estado, UmbralID, UmbralUsuarioID)
-                    VALUES (%s, %s, %s, %s, %s, NULL, NULL)
-                    ON CONFLICT (EstacionID, Fecha, Hora, Valor, Estado) DO NOTHING;
+                    VALUES (%s, %s, %s, %s, %s, NULL, NULL);
                 """, (
                     estacion_id,
                     row['Fecha'],
@@ -235,8 +234,7 @@ def obtener_data_actual_db(estacion_id):
             SELECT Fecha, Hora, Valor AS Dato, Estado
             FROM DatosSensor
             WHERE EstacionID = %s
-            ORDER BY Fecha DESC, Hora DESC
-            LIMIT 10;
+            ORDER BY Fecha DESC, Hora DESC;
         """
         df = pd.read_sql(query, engine, params=(estacion_id,))
         if df.empty or not {'Fecha', 'Hora', 'Dato', 'Estado'}.issubset(df.columns):
