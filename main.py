@@ -227,40 +227,60 @@ def insertar_datos_nuevos(data_to_insert_df, estacion_id):
         conn.close()
 
 
+# def obtener_data_actual_db(estacion_id):
+#     try:
+#         conn = get_connection()
+#         if conn is None:
+#                     print("No se pudo conectar a la base de datos.")
+#                     return pd.DataFrame()
+
+#         query = """
+#             SELECT Fecha, Hora, Valor, Estado
+#             FROM DatosSensor
+#             WHERE EstacionID = %s
+#             ORDER BY Fecha DESC, Hora DESC;
+#         """
+
+#         with conn.cursor() as cur:
+#             cur.execute(query, (estacion_id,))
+#             rows = cur.fetchall()
+#             colnames = [desc[0] for desc in cur.description]
+
+#         if not rows:
+#             print(f"[{estacion_id}] Consulta no trajo resultados.")
+#             return pd.DataFrame()
+
+#         df = pd.DataFrame(rows, columns=colnames)
+#         return df
+
+#     except Exception as e:
+#         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
+#         return pd.DataFrame()
+#     finally:
+#         if conn:
+#             conn.close()
+
 def obtener_data_actual_db(estacion_id):
     try:
-        conn = get_connection()
-        if conn is None:
-                    print("No se pudo conectar a la base de datos.")
-                    return pd.DataFrame()
+        engine = get_engine()
+        if engine is None:
+            print("No se pudo crear el engine de SQLAlchemy.")
+            return pd.DataFrame()
 
         query = """
-            SELECT Fecha, Hora, Valor, Estado
+            SELECT *
             FROM DatosSensor
             WHERE EstacionID = %s
             ORDER BY Fecha DESC, Hora DESC;
         """
-
-        with conn.cursor() as cur:
-            cur.execute(query, (estacion_id,))
-            rows = cur.fetchall()
-            colnames = [desc[0] for desc in cur.description]
-
-        if not rows:
-            print(f"[{estacion_id}] Consulta no trajo resultados.")
+        df = pd.read_sql(query, engine, params=(estacion_id,))
+        if df.empty or not {'Fecha', 'Hora', 'Valor', 'Estado'}.issubset(df.columns):
+            print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
             return pd.DataFrame()
-
-        df = pd.DataFrame(rows, columns=colnames)
         return df
-
     except Exception as e:
         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
         return pd.DataFrame()
-    finally:
-        if conn:
-            conn.close()
-
-
 
 
 def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
