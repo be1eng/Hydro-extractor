@@ -234,7 +234,7 @@ def obtener_data_actual_db(estacion_id):
             print("No se pudo conectar a la base de datos.")
             return pd.DataFrame()
         query = """
-            SELECT Fecha, Hora, Valor AS Dato, Estado
+            SELECT *
             FROM DatosSensor
             WHERE EstacionID = %s
             ORDER BY Fecha DESC, Hora DESC;
