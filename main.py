@@ -231,22 +231,34 @@ def obtener_data_actual_db(estacion_id):
     try:
         conn = get_connection()
         if conn is None:
-            print("No se pudo conectar a la base de datos.")
-            return pd.DataFrame()
+                    print("No se pudo conectar a la base de datos.")
+                    return pd.DataFrame()
+
         query = """
-            SELECT *
+            SELECT Fecha, Hora, Dato, Estado
             FROM DatosSensor
             WHERE EstacionID = %s
             ORDER BY Fecha DESC, Hora DESC;
         """
-        df = pd.read_sql(query, conn, params=(estacion_id,))
-        if df.empty or not {'Fecha', 'Hora', 'Dato', 'Estado'}.issubset(df.columns):
-            print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
+
+        with conn.cursor() as cur:
+            cur.execute(query, (estacion_id,))
+            rows = cur.fetchall()
+            colnames = [desc[0] for desc in cur.description]
+
+        if not rows:
+            print(f"[{estacion_id}] Consulta no trajo resultados.")
             return pd.DataFrame()
+
+        df = pd.DataFrame(rows, columns=colnames)
         return df
+
     except Exception as e:
         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
         return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
 
 
 
