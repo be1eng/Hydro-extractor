@@ -282,35 +282,70 @@ def obtener_data_actual_db(estacion_id):
 
 
 
+# def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
+#     df_actual = obtener_data_actual_db(estacion_id)
+#     if df_actual.empty:
+#         print(f"[{estacion_nombre}] No hay datos actuales, insertando todos los nuevos.")
+#         insertar_datos_nuevos(df_nuevo, estacion_id)
+#         return
+
+#     last_db_date = df_actual.iloc[0]['Fecha']
+#     last_db_time = df_actual.iloc[0]['Hora']
+#     last_db_dt = datetime.combine(last_db_date, last_db_time)
+
+#     last_new_date = df_nuevo.iloc[-1]['Fecha']
+#     last_new_time = df_nuevo.iloc[-1]['Hora']
+#     last_new_dt = datetime.combine(last_new_date, last_new_time)
+
+#     if last_new_dt > last_db_dt:
+#         print(f"[{estacion_nombre}] Se detectaron nuevos datos.")
+#         # Filtrar datos más recientes
+#         nuevos_datos = df_nuevo[
+#             (df_nuevo['Fecha'] > last_db_date) |
+#             ((df_nuevo['Fecha'] == last_db_date) & (df_nuevo['Hora'] > last_db_time))
+#         ]
+#         if not nuevos_datos.empty:
+#             insertar_datos_nuevos(nuevos_datos, estacion_id)
+#         else:
+#             print(f"[{estacion_nombre}] Ningún dato nuevo pasó el filtro.")
+#     else:
+#         print(f"[{estacion_nombre}] No hay datos nuevos.")
+
+
 def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
     df_actual = obtener_data_actual_db(estacion_id)
+
     if df_actual.empty:
         print(f"[{estacion_nombre}] No hay datos actuales, insertando todos los nuevos.")
         insertar_datos_nuevos(df_nuevo, estacion_id)
         return
 
+    # Último dato registrado en BD
     last_db_date = df_actual.iloc[0]['Fecha']
     last_db_time = df_actual.iloc[0]['Hora']
     last_db_dt = datetime.combine(last_db_date, last_db_time)
 
-    last_new_date = df_nuevo.iloc[-1]['Fecha']
-    last_new_time = df_nuevo.iloc[-1]['Hora']
-    last_new_dt = datetime.combine(last_new_date, last_new_time)
+    # Datos nuevos candidatos (últimos 5 por si hay retrasos en la carga)
+    last_five_new = df_nuevo.iloc[-5:]
+    data_to_insert = []
 
-    if last_new_dt > last_db_dt:
-        print(f"[{estacion_nombre}] Se detectaron nuevos datos.")
-        # Filtrar datos más recientes
-        nuevos_datos = df_nuevo[
-            (df_nuevo['Fecha'] > last_db_date) |
-            ((df_nuevo['Fecha'] == last_db_date) & (df_nuevo['Hora'] > last_db_time))
-        ]
-        if not nuevos_datos.empty:
-            insertar_datos_nuevos(nuevos_datos, estacion_id)
+    for index in range(len(last_five_new) - 1, -1, -1):
+        current_row = last_five_new.iloc[index]
+        current_dt = datetime.combine(current_row['Fecha'], current_row['Hora'])
+
+        if current_dt > last_db_dt:
+            data_to_insert.insert(0, current_row)  # Agregar en orden ascendente
         else:
-            print(f"[{estacion_nombre}] Ningún dato nuevo pasó el filtro.")
-    else:
-        print(f"[{estacion_nombre}] No hay datos nuevos.")
+            print(f"[{estacion_nombre}] Dato ya existente o anterior: {current_row['Fecha']} {current_row['Hora']}")
+            break  # Lo siguiente ya es más antiguo
 
+    if data_to_insert:
+        df_insert = pd.DataFrame(data_to_insert)
+        print(f"[{estacion_nombre}] Insertando {len(df_insert)} nuevos datos.")
+        insertar_datos_nuevos(df_insert, estacion_id)
+    else:
+        print(f"[{estacion_nombre}] No hay datos nuevos para insertar.")
+        
 
 # ---------------------------- Main con ThreadPoolExecutor ----------------------------
 
