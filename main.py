@@ -55,54 +55,6 @@ from selenium.webdriver.support import expected_conditions as EC
 variable = "CAUDAL"
 variable_opcion = "C"
 
-def procesar_estacion_worker(estacion_info):
-    """
-    Función trabajadora para ThreadPoolExecutor.
-    Cada hilo crea su propio navegador.
-    """
-    estacion_id, estacion_nombre = estacion_info
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-software-rasterizer")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--start-maximized")
-    chrome_options.add_argument("--disable-background-networking")
-
-    browser_instance = None
-    try:
-        browser_instance = webdriver.Chrome(options=chrome_options)
-        logger.info(f"--- Procesando estación: {estacion_nombre} (ID: {estacion_id}) ---")
-
-        # 1. Obtener datos de SENAMHI
-        df_senamhi_raw = obtener_data(browser_instance, estacion_id, estacion_nombre)
-        if df_senamhi_raw is None or df_senamhi_raw.empty:
-            logger.warning(f"[{estacion_nombre}] No se pudieron obtener datos de SENAMHI o el DataFrame está vacío.")
-            return None 
-
-        # 2. Formatear los datos obtenidos
-        df_formateado = formatear_data(df_senamhi_raw, estacion_nombre, umbral_neutro=0)
-
-        # 3. Identificar solo los datos realmente nuevos (Deduplicación)
-        df_datos_a_insertar = identificar_datos_para_insercion(estacion_id, df_formateado)
-
-        # 4. Si hay nuevos datos, insertar en la DB
-        if not df_datos_a_insertar.empty:
-            insertar_datos_nuevos_a_db(df_datos_a_insertar, estacion_id)
-        else:
-            logger.info(f"[{estacion_nombre}] No se encontraron datos nuevos para insertar.")
-        
-        return f"[{estacion_nombre}] Procesamiento completado." # Indicate success
-    
-    except Exception as e:
-        logger.error(f"Error al procesar la estación {estacion_nombre}: {e}")
-        return f"[{estacion_nombre}] Error en el procesamiento."
-    finally:
-        if browser_instance: # Ensure browser_instance was created before quitting
-            browser_instance.quit()
 
 # ---------------------------- Funciones de apoyo ----------------------------
 
@@ -118,6 +70,7 @@ def load_page_with_timeout(browser, url, timeout=20):
     except Exception as e:
         print(f"Error al cargar {url}: {e}")
     return browser
+
 
 def obtener_data(browser, id_cuerpo_agua, estacion, max_retries=3, retry_delay=5):
     """
@@ -179,6 +132,7 @@ def obtener_data(browser, id_cuerpo_agua, estacion, max_retries=3, retry_delay=5
 
     return None  # Return None if all attempts fail
 
+
 # ---------------------------- Obtener estaciones ----------------------------
 def fetch_estaciones():
     conn = get_connection()
@@ -196,6 +150,26 @@ def fetch_estaciones():
     finally:
         conn.close()
 
+# def formatear_data(df, estacion, umbral_neutro=0):
+#     # Formatear DataFrame
+#     df = df.iloc[1:-1].copy()  # Elimina cabecera y última fila vacía si existe
+#     df['fechaHora'] = df['fechaHora'].str.replace(' GMT', '')
+#     df['fechaHora'] = pd.to_datetime(df['fechaHora'])
+#     df['Fecha'] = df['fechaHora'].dt.date
+#     df['Hora'] = df['fechaHora'].dt.time
+#     df['Dato'] = df['dato']
+#     df['Mes'] = df['fechaHora'].dt.strftime('%B')
+
+#     # Umbral neutro constante
+#     df['Umbral'] = umbral_neutro
+#     df['Estado'] = 'Sin definir'
+#     df['Estacion'] = estacion
+
+#     # Eliminar columnas innecesarias (solo si existen)
+#     columnas_a_eliminar = ['fechaHora', 'dato']
+#     df = df.drop(columns=[col for col in columnas_a_eliminar if col in df.columns])
+
+#     return df
 def formatear_data(df, estacion, umbral_neutro=0):
     df = df.iloc[1:-1].copy()
     df['fechaHora'] = df['fechaHora'].str.replace(' GMT', '')
@@ -211,8 +185,8 @@ def formatear_data(df, estacion, umbral_neutro=0):
     columnas_a_eliminar = ['fechaHora', 'dato']
     df = df.drop(columns=[col for col in columnas_a_eliminar if col in df.columns])
     return df
-
 def obtener_data_con_browser(id_cuerpo_agua, estacion):
+    # Cada hilo crea su propio navegador
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--disable-gpu")
@@ -220,6 +194,7 @@ def obtener_data_con_browser(id_cuerpo_agua, estacion):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     browser = webdriver.Chrome(options=chrome_options)
+
     return obtener_data(browser, id_cuerpo_agua, estacion)
 
 def insertar_datos_nuevos(data_to_insert_df, estacion_id):
@@ -248,6 +223,7 @@ def insertar_datos_nuevos(data_to_insert_df, estacion_id):
     finally:
         conn.close()
 
+
 def obtener_data_actual_db(estacion_id):
     """
     Recupera el último registro de DatosSensor para una estación específica de la DB,
@@ -260,6 +236,10 @@ def obtener_data_actual_db(estacion_id):
         if conn is None:
             logger.error("No se pudo conectar a la base de datos.")
             return pd.DataFrame()
+
+        # Seleccionamos el campo 'registro_ts' que es el timestamp completo.
+        # También puedes seleccionar Fecha y Hora si los necesitas para otras operaciones
+        # pero para la comparación principal, registro_ts es lo más directo.
         query = """
             SELECT registro_ts, fecha, hora, valor, estado
             FROM DatosSensor
@@ -267,10 +247,15 @@ def obtener_data_actual_db(estacion_id):
             ORDER BY registro_ts DESC
             LIMIT 1;
         """
+
         with conn.cursor() as cur:
             cur.execute(query, (estacion_id,))
             row = cur.fetchone()
+
         if row:
+            # Los resultados de psycopg2.fetchone() son una tupla.
+            # Convertimos a DataFrame, asegurándonos de que registro_ts es un datetime object.
+            # Puedes ajustar qué columnas exactamente te devuelve si solo necesitas el timestamp.
             last_record = {
                 'registro_ts': row[0], # datetime.datetime object
                 'Fecha': row[1],      # date object
@@ -282,6 +267,7 @@ def obtener_data_actual_db(estacion_id):
         else:
             logger.info(f"[{estacion_id}] Consulta no trajo resultados o estación sin datos previos.")
             return pd.DataFrame()
+
     except Exception as e:
         logger.error(f"[{estacion_id}] Error al obtener el último dato de la DB: {e}")
         return pd.DataFrame()
@@ -289,21 +275,47 @@ def obtener_data_actual_db(estacion_id):
         if conn:
             conn.close()
 
+# def obtener_data_actual_db(estacion_id):
+#     try:
+#         engine = get_engine()
+#         if engine is None:
+#             print("No se pudo crear el engine de SQLAlchemy.")
+#             return pd.DataFrame()
+
+#         query = """
+#             SELECT *
+#             FROM DatosSensor
+#             WHERE EstacionID = :estacion_id
+#             ORDER BY Fecha DESC, Hora DESC;
+#         """
+#         df = pd.read_sql(query, engine, params={"estacion_id": estacion_id})
+#         if df.empty or not {'Fecha', 'Hora', 'Valor', 'Estado'}.issubset(df.columns):
+#             print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
+#             return pd.DataFrame()
+#         return df
+#     except Exception as e:
+#         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
+#         return pd.DataFrame()
+
+
 def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
     df_actual = obtener_data_actual_db(estacion_id)
     if df_actual.empty:
         print(f"[{estacion_nombre}] No hay datos actuales, insertando todos los nuevos.")
         insertar_datos_nuevos(df_nuevo, estacion_id)
         return
+
     last_db_date = df_actual.iloc[0]['Fecha']
     last_db_time = df_actual.iloc[0]['Hora']
     last_db_dt = datetime.combine(last_db_date, last_db_time)
+
     last_new_date = df_nuevo.iloc[-1]['Fecha']
     last_new_time = df_nuevo.iloc[-1]['Hora']
     last_new_dt = datetime.combine(last_new_date, last_new_time)
 
     if last_new_dt > last_db_dt:
         print(f"[{estacion_nombre}] Se detectaron nuevos datos.")
+        # Filtrar datos más recientes
         nuevos_datos = df_nuevo[
             (df_nuevo['Fecha'] > last_db_date) |
             ((df_nuevo['Fecha'] == last_db_date) & (df_nuevo['Hora'] > last_db_time))
@@ -315,6 +327,7 @@ def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
     else:
         print(f"[{estacion_nombre}] No hay datos nuevos.")
 
+
 def identificar_datos_para_insercion(estacion_id, df_nuevo_senamhi_formateado):
     """
     Identifica los datos de SENAMHI que son realmente nuevos comparados con la DB,
@@ -324,12 +337,18 @@ def identificar_datos_para_insercion(estacion_id, df_nuevo_senamhi_formateado):
 
     if df_ultima_lectura_db.empty:
         logger.info(f"[{estacion_id}] No hay datos previos en la DB, preparando todos los datos de SENAMHI para inserción.")
+        # df_nuevo_senamhi_formateado ya tiene 'registro_ts' de formatear_data
         return df_nuevo_senamhi_formateado
     else:
+        # Extraer el datetime de la última lectura en la DB desde la columna 'registro_ts'
         last_db_datetime = df_ultima_lectura_db.iloc[0]['registro_ts']
+
+        # Filtrar datos de SENAMHI que son estrictamente más recientes
+        # df_nuevo_senamhi_formateado ya tiene la columna 'registro_ts' de formatear_data
         nuevos_datos_filtrados = df_nuevo_senamhi_formateado[
             df_nuevo_senamhi_formateado['registro_ts'] > last_db_datetime
         ].copy()
+
         if not nuevos_datos_filtrados.empty:
             logger.info(f"[{estacion_id}] Se encontraron {len(nuevos_datos_filtrados)} nuevos registros de SENAMHI.")
             return nuevos_datos_filtrados
@@ -339,7 +358,8 @@ def identificar_datos_para_insercion(estacion_id, df_nuevo_senamhi_formateado):
 
 def insertar_datos_nuevos_a_db(data_to_insert_df, estacion_id):
     """
-    Inserta un DataFrame de nuevos datos en la tabla DatosSensor.
+    Inserta un DataFrame de nue
+    vos datos en la tabla DatosSensor.
     Asume que data_to_insert_df tiene las columnas 'Fecha', 'Hora', 'Dato', 'Estado',
     'Umbral' (mapeado a UmbralAplicado) y 'registro_ts'.
     """
@@ -366,6 +386,8 @@ def insertar_datos_nuevos_a_db(data_to_insert_df, estacion_id):
                     row['Hora'],        # Usar la columna de hora (time)
                     row['Dato'],
                     row['Estado'],
+                    # umbralid y umbralusuarioid son NULL en tu imagen, maneja esto como necesites
+                    # Si tienes IDs reales, pásalos aquí. Si no, mantén NULL.
                     None, # umbralid
                     None  # umbralusuarioid
                 ))
@@ -378,8 +400,69 @@ def insertar_datos_nuevos_a_db(data_to_insert_df, estacion_id):
             conn.close()
 
 
-
 # ---------------------------- Main con ThreadPoolExecutor ----------------------------
+
+def procesar_estacion_worker(estacion_info):
+    """
+    Función trabajadora para ThreadPoolExecutor.
+    Cada hilo crea su propio navegador.
+    """
+    estacion_id, estacion_nombre = estacion_info
+
+    # Cada hilo debe crear su propia instancia de navegador
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--disable-software-rasterizer")
+    # chrome_options.add_argument("--remote-debugging-port=9222") # May conflict with multiple instances, remove if issues
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-background-networking")
+
+    browser_instance = None # Initialize to None
+    try:
+        browser_instance = webdriver.Chrome(options=chrome_options)
+        logger.info(f"--- Procesando estación: {estacion_nombre} (ID: {estacion_id}) ---")
+
+        # 1. Obtener datos de SENAMHI
+        df_senamhi_raw = obtener_data(browser_instance, estacion_id, estacion_nombre)
+
+        if df_senamhi_raw is None or df_senamhi_raw.empty:
+            logger.warning(f"[{estacion_nombre}] No se pudieron obtener datos de SENAMHI o el DataFrame está vacío.")
+            return None # Return None to indicate failure for this station
+
+        # 2. Formatear los datos obtenidos
+        df_formateado = formatear_data(df_senamhi_raw, estacion_nombre, umbral_neutro=0)
+
+        # 3. Identificar solo los datos realmente nuevos (Deduplicación)
+        df_datos_a_insertar = identificar_datos_para_insercion(estacion_id, df_formateado)
+
+        # 4. Si hay nuevos datos, insertar en la DB
+        if not df_datos_a_insertar.empty:
+            insertar_datos_nuevos_a_db(df_datos_a_insertar, estacion_id)
+            # Aquí podrías llamar a la función para generar capturas y enviar alertas
+            # Generar capturas de pantalla (ej. para el último dato nuevo)
+            # last_new_record = df_datos_a_insertar.iloc[-1]
+            # (Llamar a tu función generar_capturas aquí, pasando los parámetros necesarios)
+            # Insertar imágenes
+            # (Llamar a tu función insertar_imagenes_a_db aquí)
+            # Enviar alertas
+            # (Llamar a tu función send_email_alert aquí)
+        else:
+            logger.info(f"[{estacion_nombre}] No se encontraron datos nuevos para insertar.")
+        
+        return f"[{estacion_nombre}] Procesamiento completado." # Indicate success
+    
+    except Exception as e:
+        logger.error(f"Error al procesar la estación {estacion_nombre}: {e}")
+        return f"[{estacion_nombre}] Error en el procesamiento."
+    finally:
+        if browser_instance: # Ensure browser_instance was created before quitting
+            browser_instance.quit()
+
 
 def main():
     logger.add("app.log", rotation="500 MB", level="INFO") # Configure logging
@@ -405,7 +488,6 @@ def main():
                 logger.error(f"Error en el futuro para la estación {estacion_nombre}: {e}")
 
     logger.info("Procesamiento de todas las estaciones completado.")
-
 
 if __name__ == "__main__":
     main()
