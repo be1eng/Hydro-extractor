@@ -55,23 +55,54 @@ from selenium.webdriver.support import expected_conditions as EC
 variable = "CAUDAL"
 variable_opcion = "C"
 
-# ------------------------------------------Configuración de Chrome------------------------------------------
-chrome_options = Options()
-chrome_options.add_argument("--headless=new")  # Usa el nuevo modo headless (desde Chrome 109+)
-chrome_options.add_argument("--headless=new")  # Desde Chrome 109+
-chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--disable-dev-shm-usage")
-chrome_options.add_argument("--disable-software-rasterizer")
-chrome_options.add_argument("--remote-debugging-port=9222")
-chrome_options.add_argument("--disable-extensions")
-chrome_options.add_argument("--window-size=1920,1080")
-chrome_options.add_argument("--start-maximized")
-chrome_options.add_argument("--disable-background-networking")
+def procesar_estacion_worker(estacion_info):
+    """
+    Función trabajadora para ThreadPoolExecutor.
+    Cada hilo crea su propio navegador.
+    """
+    estacion_id, estacion_nombre = estacion_info
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--disable-software-rasterizer")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-background-networking")
 
+    browser_instance = None
+    try:
+        browser_instance = webdriver.Chrome(options=chrome_options)
+        logger.info(f"--- Procesando estación: {estacion_nombre} (ID: {estacion_id}) ---")
 
-# Inicia el navegador en segundo plano
-browser = webdriver.Chrome(options=chrome_options)
+        # 1. Obtener datos de SENAMHI
+        df_senamhi_raw = obtener_data(browser_instance, estacion_id, estacion_nombre)
+        if df_senamhi_raw is None or df_senamhi_raw.empty:
+            logger.warning(f"[{estacion_nombre}] No se pudieron obtener datos de SENAMHI o el DataFrame está vacío.")
+            return None 
+
+        # 2. Formatear los datos obtenidos
+        df_formateado = formatear_data(df_senamhi_raw, estacion_nombre, umbral_neutro=0)
+
+        # 3. Identificar solo los datos realmente nuevos (Deduplicación)
+        df_datos_a_insertar = identificar_datos_para_insercion(estacion_id, df_formateado)
+
+        # 4. Si hay nuevos datos, insertar en la DB
+        if not df_datos_a_insertar.empty:
+            insertar_datos_nuevos_a_db(df_datos_a_insertar, estacion_id)
+        else:
+            logger.info(f"[{estacion_nombre}] No se encontraron datos nuevos para insertar.")
+        
+        return f"[{estacion_nombre}] Procesamiento completado." # Indicate success
+    
+    except Exception as e:
+        logger.error(f"Error al procesar la estación {estacion_nombre}: {e}")
+        return f"[{estacion_nombre}] Error en el procesamiento."
+    finally:
+        if browser_instance: # Ensure browser_instance was created before quitting
+            browser_instance.quit()
 
 # ---------------------------- Funciones de apoyo ----------------------------
 
@@ -87,7 +118,6 @@ def load_page_with_timeout(browser, url, timeout=20):
     except Exception as e:
         print(f"Error al cargar {url}: {e}")
     return browser
-
 
 def obtener_data(browser, id_cuerpo_agua, estacion, max_retries=3, retry_delay=5):
     """
@@ -149,7 +179,6 @@ def obtener_data(browser, id_cuerpo_agua, estacion, max_retries=3, retry_delay=5
 
     return None  # Return None if all attempts fail
 
-
 # ---------------------------- Obtener estaciones ----------------------------
 def fetch_estaciones():
     conn = get_connection()
@@ -168,28 +197,22 @@ def fetch_estaciones():
         conn.close()
 
 def formatear_data(df, estacion, umbral_neutro=0):
-    # Formatear DataFrame
-    df = df.iloc[1:-1].copy()  # Elimina cabecera y última fila vacía si existe
+    df = df.iloc[1:-1].copy()
     df['fechaHora'] = df['fechaHora'].str.replace(' GMT', '')
     df['fechaHora'] = pd.to_datetime(df['fechaHora'])
     df['Fecha'] = df['fechaHora'].dt.date
     df['Hora'] = df['fechaHora'].dt.time
-    df['Dato'] = df['dato']
+    df['registro_ts'] = df['fechaHora']
+    df['Dato'] = pd.to_numeric(df['dato'], errors='coerce')
     df['Mes'] = df['fechaHora'].dt.strftime('%B')
-
-    # Umbral neutro constante
     df['Umbral'] = umbral_neutro
     df['Estado'] = 'Sin definir'
     df['Estacion'] = estacion
-
-    # Eliminar columnas innecesarias (solo si existen)
     columnas_a_eliminar = ['fechaHora', 'dato']
     df = df.drop(columns=[col for col in columnas_a_eliminar if col in df.columns])
-
     return df
 
 def obtener_data_con_browser(id_cuerpo_agua, estacion):
-    # Cada hilo crea su propio navegador
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--disable-gpu")
@@ -197,7 +220,6 @@ def obtener_data_con_browser(id_cuerpo_agua, estacion):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     browser = webdriver.Chrome(options=chrome_options)
-
     return obtener_data(browser, id_cuerpo_agua, estacion)
 
 def insertar_datos_nuevos(data_to_insert_df, estacion_id):
@@ -226,62 +248,46 @@ def insertar_datos_nuevos(data_to_insert_df, estacion_id):
     finally:
         conn.close()
 
-
-# def obtener_data_actual_db(estacion_id):
-#     try:
-#         conn = get_connection()
-#         if conn is None:
-#                     print("No se pudo conectar a la base de datos.")
-#                     return pd.DataFrame()
-
-#         query = """
-#             SELECT Fecha, Hora, Valor, Estado
-#             FROM DatosSensor
-#             WHERE EstacionID = %s
-#             ORDER BY Fecha DESC, Hora DESC;
-#         """
-
-#         with conn.cursor() as cur:
-#             cur.execute(query, (estacion_id,))
-#             rows = cur.fetchall()
-#             colnames = [desc[0] for desc in cur.description]
-
-#         if not rows:
-#             print(f"[{estacion_id}] Consulta no trajo resultados.")
-#             return pd.DataFrame()
-
-#         df = pd.DataFrame(rows, columns=colnames)
-#         return df
-
-#     except Exception as e:
-#         print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
-#         return pd.DataFrame()
-#     finally:
-#         if conn:
-#             conn.close()
-
 def obtener_data_actual_db(estacion_id):
+    """
+    Recupera el último registro de DatosSensor para una estación específica de la DB,
+    utilizando el campo 'registro_ts' (TIMESTAMP WITHOUT TIME ZONE).
+    Retorna un DataFrame con la última fila o un DataFrame vacío si no hay datos.
+    """
+    conn = None
     try:
-        engine = get_engine()
-        if engine is None:
-            print("No se pudo crear el engine de SQLAlchemy.")
+        conn = get_connection()
+        if conn is None:
+            logger.error("No se pudo conectar a la base de datos.")
             return pd.DataFrame()
-
         query = """
-            SELECT *
+            SELECT registro_ts, fecha, hora, valor, estado
             FROM DatosSensor
-            WHERE EstacionID = :estacion_id
-            ORDER BY Fecha DESC, Hora DESC;
+            WHERE estacionid = %s
+            ORDER BY registro_ts DESC
+            LIMIT 1;
         """
-        df = pd.read_sql(query, engine, params={"estacion_id": estacion_id})
-        if df.empty or not {'Fecha', 'Hora', 'Valor', 'Estado'}.issubset(df.columns):
-            print(f"[{estacion_id}] Consulta no trajo columnas esperadas o está vacía.")
+        with conn.cursor() as cur:
+            cur.execute(query, (estacion_id,))
+            row = cur.fetchone()
+        if row:
+            last_record = {
+                'registro_ts': row[0], # datetime.datetime object
+                'Fecha': row[1],      # date object
+                'Hora': row[2],       # time object
+                'Valor': row[3],
+                'Estado': row[4]
+            }
+            return pd.DataFrame([last_record])
+        else:
+            logger.info(f"[{estacion_id}] Consulta no trajo resultados o estación sin datos previos.")
             return pd.DataFrame()
-        return df
     except Exception as e:
-        print(f"[{estacion_id}] Error al obtener datos actuales de BD: {e}")
+        logger.error(f"[{estacion_id}] Error al obtener el último dato de la DB: {e}")
         return pd.DataFrame()
-
+    finally:
+        if conn:
+            conn.close()
 
 def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
     df_actual = obtener_data_actual_db(estacion_id)
@@ -289,18 +295,15 @@ def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
         print(f"[{estacion_nombre}] No hay datos actuales, insertando todos los nuevos.")
         insertar_datos_nuevos(df_nuevo, estacion_id)
         return
-
     last_db_date = df_actual.iloc[0]['Fecha']
     last_db_time = df_actual.iloc[0]['Hora']
     last_db_dt = datetime.combine(last_db_date, last_db_time)
-
     last_new_date = df_nuevo.iloc[-1]['Fecha']
     last_new_time = df_nuevo.iloc[-1]['Hora']
     last_new_dt = datetime.combine(last_new_date, last_new_time)
 
     if last_new_dt > last_db_dt:
         print(f"[{estacion_nombre}] Se detectaron nuevos datos.")
-        # Filtrar datos más recientes
         nuevos_datos = df_nuevo[
             (df_nuevo['Fecha'] > last_db_date) |
             ((df_nuevo['Fecha'] == last_db_date) & (df_nuevo['Hora'] > last_db_time))
@@ -312,47 +315,96 @@ def verificar_y_registrar(estacion_id, estacion_nombre, df_nuevo):
     else:
         print(f"[{estacion_nombre}] No hay datos nuevos.")
 
+def identificar_datos_para_insercion(estacion_id, df_nuevo_senamhi_formateado):
+    """
+    Identifica los datos de SENAMHI que son realmente nuevos comparados con la DB,
+    utilizando el campo 'registro_ts'.
+    """
+    df_ultima_lectura_db = obtener_data_actual_db(estacion_id)
+
+    if df_ultima_lectura_db.empty:
+        logger.info(f"[{estacion_id}] No hay datos previos en la DB, preparando todos los datos de SENAMHI para inserción.")
+        return df_nuevo_senamhi_formateado
+    else:
+        last_db_datetime = df_ultima_lectura_db.iloc[0]['registro_ts']
+        nuevos_datos_filtrados = df_nuevo_senamhi_formateado[
+            df_nuevo_senamhi_formateado['registro_ts'] > last_db_datetime
+        ].copy()
+        if not nuevos_datos_filtrados.empty:
+            logger.info(f"[{estacion_id}] Se encontraron {len(nuevos_datos_filtrados)} nuevos registros de SENAMHI.")
+            return nuevos_datos_filtrados
+        else:
+            logger.info(f"[{estacion_id}] No hay datos de SENAMHI más recientes que los de la base de datos.")
+            return pd.DataFrame()
+
+def insertar_datos_nuevos_a_db(data_to_insert_df, estacion_id):
+    """
+    Inserta un DataFrame de nuevos datos en la tabla DatosSensor.
+    Asume que data_to_insert_df tiene las columnas 'Fecha', 'Hora', 'Dato', 'Estado',
+    'Umbral' (mapeado a UmbralAplicado) y 'registro_ts'.
+    """
+    if data_to_insert_df.empty:
+        logger.info(f"[{estacion_id}] No hay datos para insertar en DatosSensor.")
+        return
+
+    conn = None
+    try:
+        conn = get_connection()
+        if conn is None:
+            logger.error("No se pudo conectar a la base de datos.")
+            return
+
+        with conn.cursor() as cur:
+            for _, row in data_to_insert_df.iterrows():
+                # Asegúrate de que los tipos coincidan con las columnas de tu tabla
+                cur.execute("""
+                    INSERT INTO DatosSensor (estacionid, fecha, hora, valor, estado, umbralid, umbralusuarioid)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s);
+                """, (
+                    estacion_id,
+                    row['Fecha'],       # Usar la columna de fecha (date)
+                    row['Hora'],        # Usar la columna de hora (time)
+                    row['Dato'],
+                    row['Estado'],
+                    None, # umbralid
+                    None  # umbralusuarioid
+                ))
+            conn.commit()
+            logger.info(f"[{estacion_id}] {len(data_to_insert_df)} nuevos datos insertados en DatosSensor.")
+    except Exception as e:
+        logger.error(f"[{estacion_id}] Error al insertar datos en DatosSensor: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
 
 # ---------------------------- Main con ThreadPoolExecutor ----------------------------
 
 def main():
+    logger.add("app.log", rotation="500 MB", level="INFO") # Configure logging
+
     estaciones = fetch_estaciones()
     if not estaciones:
-        print("No hay estaciones.")
+        logger.warning("No hay estaciones activas para procesar.")
         return
 
-    formatted_results = []
- 
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        # Lanza las tareas paralelamente, pasando ID y nombre de la estación
-        futures = {
-            executor.submit(obtener_data_con_browser, est[0], est[1]): est[1] for est in estaciones
-        }
+    logger.info(f"Iniciando procesamiento para {len(estaciones)} estaciones.")
 
+    # Usar ThreadPoolExecutor para procesar estaciones en paralelo
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit tasks, passing (EstacionID, EstacionNombre) as a tuple
+        futures = {executor.submit(procesar_estacion_worker, (est[0], est[1])): est[1] for est in estaciones}
 
         for future in as_completed(futures):
-            estacion_nombre = futures[future]  # Recupera el nombre de la estación asociada
-            df = future.result()
-            if df is not None and not df.empty:
-                try:
-                    # Aplica formateo con umbral neutro (ej. 0)
-                    df_formateado = formatear_data(df, estacion_nombre, umbral_neutro=0)
-                    formatted_results.append(df_formateado)
-                except Exception as e:
-                    print(f"[{estacion_nombre}] Error al formatear data: {e}")
+            estacion_nombre = futures[future]
+            try:
+                result = future.result()
+                logger.info(f"Resultado del procesamiento para {estacion_nombre}: {result}")
+            except Exception as e:
+                logger.error(f"Error en el futuro para la estación {estacion_nombre}: {e}")
 
-    if formatted_results:
-        df_final = pd.concat(formatted_results, ignore_index=True)
-        print("Datos obtenidos y formateados.")
-        print(df_final.head())
-
-        for est_id, est_nombre in estaciones:
-            df_est = df_final[df_final["Estacion"] == est_nombre]
-            if not df_est.empty:
-                verificar_y_registrar(est_id, est_nombre, df_est)
-
-    else:
-        print("No se recuperaron datos.")
+    logger.info("Procesamiento de todas las estaciones completado.")
 
 
 if __name__ == "__main__":
